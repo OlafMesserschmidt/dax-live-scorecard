@@ -25,27 +25,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # ─── SSH-Agent einrichten ───────────────────────────────────────────
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
-      # ─── Known Hosts hinzufügen ─────────────────────────────────────────
-      - name: Add VPS to known hosts
+      # ─── SSH-Key als Datei schreiben + ssh-agent starten ────────────────
+      - name: Configure SSH
         run: |
+          set -euo pipefail
+
+          # SSH-Verzeichnis anlegen
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Private Key aus Secret in Datei schreiben
+          # GitHub Secrets können \n als Literal enthalten — wir behandeln beides
+          printf '%s' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+
+          # Falls die Datei keine echten Newlines enthält (literal \n),
+          # mit sed reparieren
+          if ! grep -q 'BEGIN' ~/.ssh/vps_key; then
+            sed -i 's/\\n/\n/g' ~/.ssh/vps_key
+          fi
+
+          chmod 600 ~/.ssh/vps_key
+
+          # Validierung
+          echo "Key file size: $(wc -c < ~/.ssh/vps_key) bytes"
+          echo "Key first line: $(head -1 ~/.ssh/vps_key)"
+          echo "Key last line:  $(tail -1 ~/.ssh/vps_key)"
+
+          # ssh-agent starten und Key hinzufügen
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/vps_key
+
+          # Known hosts
           PORT="${{ secrets.VPS_PORT || 22 }}"
-          echo "Scanning host ${{ secrets.VPS_HOST }}:$PORT ..."
+          echo "Scanning ${{ secrets.VPS_HOST }}:$PORT ..."
           ssh-keyscan -p "$PORT" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
-          echo "Done. Known hosts:"
-          wc -l ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          echo "Known hosts entries: $(wc -l < ~/.ssh/known_hosts)"
 
       # ─── Debug: SSH-Verbindung testen ──────────────────────────────────
       - name: Test SSH connection
         run: |
           PORT="${{ secrets.VPS_PORT || 22 }}"
           echo "Connecting to ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$PORT ..."
-          ssh -p "$PORT" -v -o ConnectTimeout=10 -o BatchMode=yes \
+          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "echo 'SSH_OK: $(hostname) $(whoami) $(date)'"
 
@@ -53,36 +75,41 @@ jobs:
       - name: Deploy to VPS
         run: |
           PORT="${{ secrets.VPS_PORT || 22 }}"
-          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'DEPLOY_SCRIPT'
-            set -euo pipefail
 
-            # NVM laden (non-interactive SSH lädt .bashrc nicht)
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          # Heredoc als separate Datei, um Quoting-Probleme zu vermeiden
+          cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
+          set -euo pipefail
 
-            echo "Node: $(node -v 2>/dev/null || echo 'NOT FOUND')"
-            echo "PM2:  $(pm2 --version 2>/dev/null || echo 'NOT FOUND')"
+          # NVM laden (non-interactive SSH lädt .bashrc nicht)
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-            APP_DIR="/var/www/dax-scorecard"
-            cd "$APP_DIR"
+          echo "Node: $(node -v 2>/dev/null || echo 'NOT FOUND')"
+          echo "PM2:  $(pm2 --version 2>/dev/null || echo 'NOT FOUND')"
 
-            echo ":: Git pull"
-            git fetch origin main
-            git reset --hard origin/main
-            echo "HEAD: $(git rev-parse --short HEAD)"
+          APP_DIR="/var/www/dax-scorecard"
+          cd "$APP_DIR"
 
-            echo ":: PM2 restart"
-            pm2 restart dax-scorecard --update-env
-            pm2 list
+          echo ":: Git pull"
+          git fetch origin main
+          git reset --hard origin/main
+          echo "HEAD: $(git rev-parse --short HEAD)"
 
-            echo ":: Health-Check"
-            sleep 3
-            if curl -sf http://127.0.0.1:4173/api/health | grep -q '"ok":true'; then
-              echo "DEPLOY_OK: App healthy"
-            else
-              echo "DEPLOY_FAIL: Health-Check failed"
-              pm2 logs dax-scorecard --lines 20 --nostream
-              exit 1
-            fi
+          echo ":: PM2 restart"
+          pm2 restart dax-scorecard --update-env
+          pm2 list
+
+          echo ":: Health-Check"
+          sleep 3
+          if curl -sf http://127.0.0.1:4173/api/health | grep -q '"ok":true'; then
+            echo "DEPLOY_OK: App healthy"
+          else
+            echo "DEPLOY_FAIL: Health-Check failed"
+            pm2 logs dax-scorecard --lines 20 --nostream
+            exit 1
+          fi
           DEPLOY_SCRIPT
+
+          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            < /tmp/deploy.sh
