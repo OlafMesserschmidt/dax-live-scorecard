@@ -7,7 +7,7 @@
 #    VPS_HOST       — IP-Adresse des Hostinger VPS
 #    VPS_USER       — SSH-User (root)
 #    VPS_SSH_KEY    — Private SSH-Key (Ed25519/RSA, inkl. BEGIN/END-Zeilen)
-#    VPS_PORT       — SSH-Port (z.B. 22 als String)
+#    VPS_PORT       — SSH-Port (z.B. 22)
 # =============================================================================
 name: Deploy
 
@@ -25,35 +25,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # ─── Diagnose-Step: Secrets validieren (ohne Werte zu leaken) ───────
-      - name: Validate secrets
-        run: |
-          echo "VPS_HOST set:     ${{ secrets.VPS_HOST != '' && 'yes' || 'NO' }}"
-          echo "VPS_USER set:     ${{ secrets.VPS_USER != '' && 'yes' || 'NO' }}"
-          echo "VPS_SSH_KEY set:  ${{ secrets.VPS_SSH_KEY != '' && 'yes' || 'NO' }}"
-          echo "VPS_PORT set:     ${{ secrets.VPS_PORT != '' && 'yes' || 'NO (defaults to 22)' }}"
-          KEY_LEN=$(printf '%s' "${{ secrets.VPS_SSH_KEY }}" | wc -c)
-          echo "VPS_SSH_KEY len:  $KEY_LEN bytes"
-          KEY_FIRST=$(printf '%s' "${{ secrets.VPS_SSH_KEY }}" | head -1)
-          echo "VPS_SSH_KEY starts with: $KEY_FIRST"
-
-      # ─── Diagnose-Step: Netzwerk-Test zum VPS ───────────────────────────
-      - name: Network reachability test
-        run: |
-          echo "Testing TCP connectivity to ${{ secrets.VPS_HOST }}:${{ secrets.VPS_PORT || 22 }} ..."
-          nc -zv -w5 "${{ secrets.VPS_HOST }}" "${{ secrets.VPS_PORT || 22 }}" 2>&1 || true
-
-      # ─── Deploy-Step: SSH + Script ──────────────────────────────────────
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1
+      # ─── SSH-Agent einrichten ───────────────────────────────────────────
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.1
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          timeout: 30s
-          command_timeout: 60s
-          script: |
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      # ─── Known Hosts hinzufügen ─────────────────────────────────────────
+      - name: Add VPS to known hosts
+        run: |
+          PORT="${{ secrets.VPS_PORT || 22 }}"
+          echo "Scanning host ${{ secrets.VPS_HOST }}:$PORT ..."
+          ssh-keyscan -p "$PORT" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "Done. Known hosts:"
+          wc -l ~/.ssh/known_hosts
+
+      # ─── Debug: SSH-Verbindung testen ──────────────────────────────────
+      - name: Test SSH connection
+        run: |
+          PORT="${{ secrets.VPS_PORT || 22 }}"
+          echo "Connecting to ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$PORT ..."
+          ssh -p "$PORT" -v -o ConnectTimeout=10 -o BatchMode=yes \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "echo 'SSH_OK: $(hostname) $(whoami) $(date)'"
+
+      # ─── Deploy-Script ausführen ───────────────────────────────────────
+      - name: Deploy to VPS
+        run: |
+          PORT="${{ secrets.VPS_PORT || 22 }}"
+          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'DEPLOY_SCRIPT'
             set -euo pipefail
 
             # NVM laden (non-interactive SSH lädt .bashrc nicht)
@@ -84,3 +85,4 @@ jobs:
               pm2 logs dax-scorecard --lines 20 --nostream
               exit 1
             fi
+          DEPLOY_SCRIPT
