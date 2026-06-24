@@ -17,7 +17,7 @@ set -euo pipefail
 DOMAIN="scorecard.example.com"
 APP_DIR="/var/www/dax-scorecard"
 APP_PORT=4173
-NODE_VERSION="--lts"
+NODE_LTS_MAJOR="22"
 REPO_URL="https://github.com/OLAFMESSERSCHMIDT/dax-live-scorecard.git"
 LOG_DIR="/var/log/dax-scorecard"
 
@@ -38,16 +38,17 @@ apt install -y curl git nginx ufw certbot python3-certbot-nginx
 
 # ─── 2. Node.js via NVM installieren ─────────────────────────────────────────
 echo "=== 2/7 Node.js installieren ==="
-if ! command -v node &> /dev/null; then
+export NVM_DIR="$HOME/.nvm"
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
-  export NVM_DIR="$HOME/.nvm"
-  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-  nvm install "$NODE_VERSION"
-  nvm alias default "$NODE_VERSION"
-  log "Node.js $(node -v) installiert"
-else
-  log "Node.js $(node -v) bereits vorhanden"
 fi
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+if ! command -v node &> /dev/null; then
+  nvm install "$NODE_LTS_MAJOR"
+  nvm alias default "$NODE_LTS_MAJOR"
+fi
+log "Node.js $(node -v), npm $(npm -v)"
 
 # ─── 3. PM2 installieren ─────────────────────────────────────────────────────
 echo "=== 3/7 PM2 installieren ==="
@@ -131,7 +132,8 @@ echo "=== 7/7 PM2 + SSL ==="
 cd "$APP_DIR"
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup systemd -u $(whoami) --hp "$HOME" 2>/dev/null || true
+pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
+log "PM2 startup konfiguriert"
 log "PM2 gestartet — App läuft auf Port $APP_PORT"
 
 # Warten bis App erreichbar ist
