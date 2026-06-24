@@ -6,8 +6,8 @@
 #  Benötigte GitHub Secrets (Settings → Secrets and variables → Actions):
 #    VPS_HOST       — IP-Adresse des Hostinger VPS
 #    VPS_USER       — SSH-User (root)
-#    VPS_SSH_KEY    — Private SSH-Key (Ed25519/RSA)
-#    VPS_PORT       — SSH-Port (22 oder custom, als String)
+#    VPS_SSH_KEY    — Private SSH-Key (Ed25519/RSA, inkl. BEGIN/END-Zeilen)
+#    VPS_PORT       — SSH-Port (z.B. 22 als String)
 # =============================================================================
 name: Deploy
 
@@ -25,6 +25,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # ─── Diagnose-Step: Secrets validieren (ohne Werte zu leaken) ───────
+      - name: Validate secrets
+        run: |
+          echo "VPS_HOST set:     ${{ secrets.VPS_HOST != '' && 'yes' || 'NO' }}"
+          echo "VPS_USER set:     ${{ secrets.VPS_USER != '' && 'yes' || 'NO' }}"
+          echo "VPS_SSH_KEY set:  ${{ secrets.VPS_SSH_KEY != '' && 'yes' || 'NO' }}"
+          echo "VPS_PORT set:     ${{ secrets.VPS_PORT != '' && 'yes' || 'NO (defaults to 22)' }}"
+          KEY_LEN=$(printf '%s' "${{ secrets.VPS_SSH_KEY }}" | wc -c)
+          echo "VPS_SSH_KEY len:  $KEY_LEN bytes"
+          KEY_FIRST=$(printf '%s' "${{ secrets.VPS_SSH_KEY }}" | head -1)
+          echo "VPS_SSH_KEY starts with: $KEY_FIRST"
+
+      # ─── Diagnose-Step: Netzwerk-Test zum VPS ───────────────────────────
+      - name: Network reachability test
+        run: |
+          echo "Testing TCP connectivity to ${{ secrets.VPS_HOST }}:${{ secrets.VPS_PORT || 22 }} ..."
+          nc -zv -w5 "${{ secrets.VPS_HOST }}" "${{ secrets.VPS_PORT || 22 }}" 2>&1 || true
+
+      # ─── Deploy-Step: SSH + Script ──────────────────────────────────────
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -32,7 +51,8 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          debug: true
+          timeout: 30s
+          command_timeout: 60s
           script: |
             set -euo pipefail
 
@@ -53,7 +73,6 @@ jobs:
 
             echo ":: PM2 restart"
             pm2 restart dax-scorecard --update-env
-            echo "PM2 status:"
             pm2 list
 
             echo ":: Health-Check"
