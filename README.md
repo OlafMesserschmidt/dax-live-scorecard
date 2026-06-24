@@ -1,6 +1,8 @@
 # DAX Live Scorecard Dashboard
 
-Lokales Web-Dashboard für eine tägliche DAX-Handelsentscheidung auf Basis der Scorecard-Logik aus der Portfoliomanager-Ausbildung von André Stagge, CFTe, CFA. Die Web-App ist das Pendant zum Excel-Prototyp (`Scorecard.xlsx`) und kombiniert **20 Strategien** aus 4 Gruppen zu einem gewichteten Gesamtscore.
+Web-Dashboard für eine tägliche DAX-Handelsentscheidung auf Basis der Scorecard-Logik aus der Portfoliomanager-Ausbildung von André Stagge, CFTe, CFA. Die Web-App ist das Pendant zum Excel-Prototyp (`Scorecard.xlsx`) und kombiniert **20 Strategien** aus 4 Gruppen zu einem gewichteten Gesamtscore.
+
+> **Live:** [https://hermes.aibuzz.cloud](https://hermes.aibuzz.cloud) — Hostinger VPS, PM2, Nginx, Let's Encrypt SSL
 
 ## Ziel
 
@@ -19,6 +21,15 @@ Der Nutzer soll morgens oder vor einer Handelsentscheidung schnell sehen:
 ```text
 DAX-Live-Scorecard-Dashboard/
 ├── package.json              # Zero-dependency, nur Node-Stdlib
+├── .gitignore                # node_modules/, .env, logs ausgenommen
+├── ecosystem.config.cjs     # PM2-Prozess-Konfig (Port 4173, Fork-Mode, Autorestart)
+├── data/
+│   └── dax-history.csv       # Portable CSV-Fallback (DAX_CSV_PATH-Env-Var steuerbar)
+├── deploy/
+│   ├── vps-setup.sh          # 7-Phasen-VPS-Setup (NVM, PM2, Nginx, UFW, SSL)
+│   └── nginx-scorecard.conf  # Nginx Reverse-Proxy mit SSL/HSTS/Security-Headers
+├── .github/workflows/
+│   └── deploy.yml            # GitHub Actions CI/CD — SSH Auto-Deploy on Push
 ├── public/
 │   ├── index.html            # Dashboard-Layout (Topbar → Hero-Grid → Strategy-Duo → Trading → Treiber)
 │   ├── styles.css            # Layout, Ampel-Farben, Responsive (3 Breakpoints)
@@ -55,6 +66,67 @@ JSON → app.js → DOM-Rendering
 ```
 
 Der Browser ruft nur den lokalen Server auf. Dadurch bleiben API-Calls serverseitig — kein API-Key im Browser-Code.
+
+---
+
+## Deployment (VPS)
+
+### Live-System
+
+| Eigenschaft | Wert |
+|---|---|
+| **URL** | `https://hermes.aibuzz.cloud` |
+| **VPS** | Hostinger VPS, Ubuntu 24.04 LTS |
+| **Git-Repo** | `https://github.com/OlafMesserschmidt/dax-live-scorecard` |
+| **SSL** | Let's Encrypt, Auto-Renew via `certbot.timer` |
+| **PM2-Prozess** | `dax-scorecard` (Fork-Mode, Port 4173) |
+| **Node.js** | v24.18.0 via NVM |
+| **CI/CD** | GitHub Actions — Auto-Deploy on Push to `main` |
+
+### Architektur
+
+```
+Internet (HTTPS :443)
+  │  ▼
+Nginx (Reverse Proxy + Let's Encrypt SSL)
+  │  proxy_pass http://127.0.0.1:4173
+  ▼
+PM2 → node src/server.js (Port 4173)
+  ├── public/ → statische Files
+  ├── src/    → Scoring-Engine + Provider
+  └── data/   → CSV-Fallback
+         │  ▼
+Yahoo Finance API + alternative.me (outbound HTTPS)
+```
+
+### GitHub Actions CI/CD
+
+Bei Push auf `main` deployt der Workflow automatisch:
+
+```
+git push origin main
+  │  ▼
+GitHub Actions Runner (ubuntu-latest)
+  ├─ Debug secrets       (Validierung: non-empty)
+  ├─ Configure SSH       (Key schreiben, known_hosts)
+  ├─ Test SSH connection (SSH-Login verifizieren)
+  └─ Deploy to VPS        (git reset → pm2 restart → health-check)
+```
+
+**Voraussetzung:** GitHub Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PORT` (unter Settings → Secrets and variables → Actions → **Secrets**-Tab).
+
+### Manuelles Update auf dem VPS
+
+```bash
+cd /var/www/dax-scorecard && git pull origin main && pm2 restart dax-scorecard
+```
+
+### Deployment-Vorteile
+
+- **Zero npm dependencies** — kein `npm install`, keine Supply-Chain-Risiken
+- **Kein Build-Step** — direktes Deployment
+- **PM2 Autorestart** — überlebt Crashes und Reboots
+- **Let's Encrypt Auto-Renew** — `certbot.timer` erneuert automatisch
 
 ---
 
@@ -503,7 +575,7 @@ Die Provider-Kette versucht mehrere freie (API-key-freie) Datenquellen in Folge.
 |---|---|---|---|---|
 | 1 | **Yahoo query1** | `query1.finance.yahoo.com/v8/finance/chart/^GDAXI?range=1y&interval=1d` | 15 Min | Primär |
 | 2 | **Yahoo query2** | `query2.finance.yahoo.com/v8/finance/chart/^GDAXI?range=1y&interval=1d` | 15 Min | Sekundär-Server |
-| 3 | **Lokale CSV** | `Input/dax-history.csv` | EOD | Broker-Export / Stooq-Browser-Download |
+| 3 | **Lokale CSV** | `data/dax-history.csv` (oder `DAX_CSV_PATH`-Env-Var) | EOD | Broker-Export / Stooq-Browser-Download |
 | 4 | **Screenshot** | hartkodiert | — | Automatischer Fallback |
 
 ### Screenshot-Fallback
@@ -659,6 +731,7 @@ Alle kalenderbasierten Strategien nutzen hartkodierte `Set`s für 2026:
 | **Intraday nur aktuell** | Yahoo `range=1d` liefert keine historischen Intraday-Daten. | Morning-Break-Out bei historischen Daten → neutral. |
 | **5-Tage-Status statisch** | `firstFiveDaysPositive` im Fallback hartkodiert `true`. | Bei Yahoo/CSV aus Historie berechenbar (Default `true`). |
 | **Kalender nur 2026** | Feiertage, FOMC, Hexen als `Set` hartkodiert. | Kalender-Generator für 2027+ als Ausbaustufe. |
+| **CSV-Fallback unzureichend** | `data/dax-history.csv` hat nur 2 Zeilen (Stub). Provider benötigt ≥200 Zeilen. | Auf VPS ist Yahoo primär. Für Offline-Tests Stooq-CSV manuell laden. |
 | **Kein Stooq-Download** | Stooq.com hat JavaScript-PoW-Gatekeeper + Bot-Erkennung. | Manueller Browser-Download funktioniert. |
 | **CNN F&G nicht verfügbar** | CNN API blockt (HTTP 418/500). | Ersatz durch `api.alternative.me` (Crypto F&G). |
 | **US-Zentrik** | Yield Curve, Credit Spreads sind US-Märkte. | US-Märkte sind globaler Benchmark; DAX korreliert ~0,7 mit S&P. |
