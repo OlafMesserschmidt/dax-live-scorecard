@@ -24,71 +24,69 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
     steps:
-      # ─── SSH-Key als Datei schreiben + ssh-agent starten ────────────────
+      # ─── SSH-Key als Datei schreiben ────────────────────────────────────
       - name: Configure SSH
         run: |
           set -euo pipefail
 
-          # SSH-Verzeichnis anlegen
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Private Key aus Secret in Datei schreiben
-          # GitHub Secrets können \n als Literal enthalten — wir behandeln beides
-          printf '%s' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          # Key über env var (sicher vor YAML-Interpolation-Issues)
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/vps_key
 
-          # Falls die Datei keine echten Newlines enthält (literal \n),
-          # mit sed reparieren
+          # Falls literal \n statt echter Newline:
           if ! grep -q 'BEGIN' ~/.ssh/vps_key; then
             sed -i 's/\\n/\n/g' ~/.ssh/vps_key
           fi
 
           chmod 600 ~/.ssh/vps_key
 
-          # Validierung
           echo "Key file size: $(wc -c < ~/.ssh/vps_key) bytes"
           echo "Key first line: $(head -1 ~/.ssh/vps_key)"
           echo "Key last line:  $(tail -1 ~/.ssh/vps_key)"
 
-          # ssh-agent starten und Key hinzufügen
+          # ssh-agent starten und Key laden
           eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/vps_key
+          ssh-add ~/.ssh/vps_key 2>&1 || true
 
           # Known hosts
-          PORT="${{ secrets.VPS_PORT || 22 }}"
-          echo "Scanning ${{ secrets.VPS_HOST }}:$PORT ..."
-          ssh-keyscan -p "$PORT" -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "Scanning $VPS_HOST:$VPS_PORT ..."
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           chmod 644 ~/.ssh/known_hosts
-          echo "Known hosts entries: $(wc -l < ~/.ssh/known_hosts)"
+          echo "Known hosts: $(wc -l < ~/.ssh/known_hosts) entries"
 
-      # ─── Debug: SSH-Verbindung testen ──────────────────────────────────
+      # ─── SSH-Verbindung testen ─────────────────────────────────────────
       - name: Test SSH connection
         run: |
-          PORT="${{ secrets.VPS_PORT || 22 }}"
-          echo "Connecting to ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$PORT ..."
-          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "echo 'SSH_OK: $(hostname) $(whoami) $(date)'"
+          set -euo pipefail
+          echo "Connecting to $VPS_USER@$VPS_HOST:$VPS_PORT ..."
+          ssh -p "$VPS_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "echo SSH_OK: \$(hostname) \$(whoami)"
 
       # ─── Deploy-Script ausführen ───────────────────────────────────────
       - name: Deploy to VPS
         run: |
-          PORT="${{ secrets.VPS_PORT || 22 }}"
+          set -euo pipefail
 
-          # Heredoc als separate Datei, um Quoting-Probleme zu vermeiden
+          # Deploy-Script lokal vorbereiten
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
           set -euo pipefail
 
-          # NVM laden (non-interactive SSH lädt .bashrc nicht)
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-          echo "Node: $(node -v 2>/dev/null || echo 'NOT FOUND')"
-          echo "PM2:  $(pm2 --version 2>/dev/null || echo 'NOT FOUND')"
+          echo "Node: $(node -v 2>/dev/null || echo NOT_FOUND)"
+          echo "PM2:  $(pm2 --version 2>/dev/null || echo NOT_FOUND)"
 
-          APP_DIR="/var/www/dax-scorecard"
-          cd "$APP_DIR"
+          cd /var/www/dax-scorecard
 
           echo ":: Git pull"
           git fetch origin main
@@ -110,6 +108,6 @@ jobs:
           fi
           DEPLOY_SCRIPT
 
-          ssh -p "$PORT" -o ConnectTimeout=10 -o BatchMode=yes \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+          ssh -p "$VPS_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+            "$VPS_USER@$VPS_HOST" \
             < /tmp/deploy.sh
