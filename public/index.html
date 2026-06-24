@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DAX Live Scorecard Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">DAX Index · XETR</p>
+          <h1>DAX Live Scorecard</h1>
+        </div>
+        <div class="actions">
+          <input id="dateInput" type="date" aria-label="Entscheidungsdatum">
+          <button id="refreshButton" type="button">Aktualisieren</button>
+        </div>
+      </header>
+
+      <section class="hero-grid">
+        <article class="panel market-panel">
+          <p class="section-label">Marktdaten</p>
+          <h2>DAX</h2>
+          <p class="metric-label">Letzter Schlusskurs</p>
+          <p id="closeValue" class="close-value">lädt</p>
+          <p id="dataStatus" class="status-line">Daten werden geladen</p>
+        </article>
+
+        <article id="decisionPanel" class="panel decision-panel neutral-panel">
+          <p class="section-label">Tagesentscheidung</p>
+          <h2 id="decisionText">lädt</h2>
+          <p id="scoreValue" class="score-value">0</p>
+          <p id="tradingDayStatus" class="status-line">-</p>
+          <p id="decisionDate" class="muted">-</p>
+        </article>
+
+        <article class="panel">
+          <p class="section-label">Score-Verteilung</p>
+          <dl class="score-list">
+            <div><dt>Investment</dt><dd id="investmentScore" class="score-neu">0</dd></div>
+            <div><dt>Marktausblick</dt><dd id="marketOutlookScore" class="score-neu">0</dd></div>
+            <div><dt>Trading (×2)</dt><dd id="tradingScore" class="score-neu">0</dd></div>
+            <div><dt>Timing (×2)</dt><dd id="timingScore" class="score-neu">0</dd></div>
+          </dl>
+          <div class="signal-counts">
+            <span class="positive">Positiv <b id="positiveCount">0</b></span>
+            <span class="negative">Negativ <b id="negativeCount">0</b></span>
+            <span class="neutral">Neutral <b id="neutralCount">0</b></span>
+          </div>
+        </article>
+      </section>
+
+      <div class="strategy-duo">
+        <div class="strategy-column">
+          <section class="strategy-section">
+            <div class="section-title">
+              <h2>Investment-Strategien</h2>
+            </div>
+            <div id="investmentGrid" class="strategy-grid six"></div>
+          </section>
+
+          <section class="strategy-section">
+            <div class="section-title blue">
+              <h2>Timing</h2>
+            </div>
+            <div id="timingGrid" class="strategy-grid two"></div>
+          </section>
+        </div>
+
+        <section class="strategy-section">
+          <div class="section-title">
+            <h2>Marktausblick</h2>
+          </div>
+          <div id="marketOutlookGrid" class="strategy-grid five"></div>
+        </section>
+      </div>
+
+      <section class="strategy-section">
+        <div class="section-title blue">
+          <h2>Trading-Strategien</h2>
+        </div>
+        <div id="tradingGrid" class="strategy-grid seven"></div>
+      </section>
+
+      <section class="bottom-grid">
+        <article class="drivers-panel">
+          <p class="section-label">Aktive Scorecard-Treiber</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Bereich</th>
+                  <th>Strategie</th>
+                  <th>Signal</th>
+                  <th style="text-align:right">Punkte</th>
+                  <th>Grund</th>
+                </tr>
+              </thead>
+              <tbody id="driversBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
