@@ -30,6 +30,19 @@ jobs:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
     steps:
+      # ─── Debug: Secret-Validierung (leakt keine Werte) ─────────────────
+      - name: Debug secrets
+        run: |
+          echo "VPS_HOST length:    ${#VPS_HOST}"
+          echo "VPS_USER length:    ${#VPS_USER}"
+          echo "VPS_SSH_KEY length: ${#VPS_SSH_KEY}"
+          echo "VPS_PORT length:    ${#VPS_PORT}"
+          echo "VPS_PORT value:     '$VPS_PORT'"
+          [ -z "$VPS_HOST" ]   && echo "ERR: VPS_HOST empty"   || echo "VPS_HOST: set"
+          [ -z "$VPS_USER" ]   && echo "ERR: VPS_USER empty"   || echo "VPS_USER: set"
+          [ -z "$VPS_SSH_KEY" ] && echo "ERR: VPS_SSH_KEY empty" || echo "VPS_SSH_KEY: set"
+          [ -z "$VPS_PORT" ]   && echo "WARN: VPS_PORT empty"   || echo "VPS_PORT: set"
+
       # ─── SSH-Key schreiben + Known Hosts ───────────────────────────────
       - name: Configure SSH
         run: |
