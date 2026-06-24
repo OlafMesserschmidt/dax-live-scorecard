@@ -30,15 +30,12 @@ jobs:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
     steps:
-      # ─── SSH-Key als Datei schreiben ────────────────────────────────────
+      # ─── SSH-Key schreiben + Known Hosts ───────────────────────────────
       - name: Configure SSH
         run: |
-          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # Key über env var (sicher vor YAML-Interpolation-Issues)
+          # Key aus Env-Var in Datei schreiben
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/vps_key
 
           # Falls literal \n statt echter Newline:
@@ -47,36 +44,25 @@ jobs:
           fi
 
           chmod 600 ~/.ssh/vps_key
+          echo "Key size: $(wc -c < ~/.ssh/vps_key) bytes, first: $(head -1 ~/.ssh/vps_key)"
 
-          echo "Key file size: $(wc -c < ~/.ssh/vps_key) bytes"
-          echo "Key first line: $(head -1 ~/.ssh/vps_key)"
-          echo "Key last line:  $(tail -1 ~/.ssh/vps_key)"
-
-          # ssh-agent starten und Key laden
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/vps_key 2>&1 || true
-
-          # Known hosts
-          echo "Scanning $VPS_HOST:$VPS_PORT ..."
-          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # Known hosts (nicht-kritisch)
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           chmod 644 ~/.ssh/known_hosts
           echo "Known hosts: $(wc -l < ~/.ssh/known_hosts) entries"
 
       # ─── SSH-Verbindung testen ─────────────────────────────────────────
       - name: Test SSH connection
         run: |
-          set -euo pipefail
           echo "Connecting to $VPS_USER@$VPS_HOST:$VPS_PORT ..."
-          ssh -p "$VPS_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+          ssh -i ~/.ssh/vps_key -p "$VPS_PORT" \
+            -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
             "$VPS_USER@$VPS_HOST" \
             "echo SSH_OK: \$(hostname) \$(whoami)"
 
-      # ─── Deploy-Script ausführen ───────────────────────────────────────
+      # ─── Deploy ────────────────────────────────────────────────────────
       - name: Deploy to VPS
         run: |
-          set -euo pipefail
-
-          # Deploy-Script lokal vorbereiten
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
           set -euo pipefail
 
@@ -108,6 +94,7 @@ jobs:
           fi
           DEPLOY_SCRIPT
 
-          ssh -p "$VPS_PORT" -o ConnectTimeout=10 -o BatchMode=yes \
+          ssh -i ~/.ssh/vps_key -p "$VPS_PORT" \
+            -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
             "$VPS_USER@$VPS_HOST" \
             < /tmp/deploy.sh
